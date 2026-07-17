@@ -36,13 +36,13 @@
 
 ## entry-00176 — Python Code 节点 __objclass__ 沙箱逃逸 (GHSA-MMGG-M5J7-F83H)
 
-- **原问题**：critical_operation 被置于 constants.py:126 的 BLOCKED_ATTRIBUTES 静态集合定义。该集合只是被 visit_Attribute 引用的数据源，本身不执行任何校验，是“关键操作落在静态列表”的典型问题；同时原 desc 还误判了绕过机制——它声称“集合漏列 __objclass__，使字面量 __objclass__ 访问被静默放行”，但实际上字面量 `.__objclass__` 仍会被 visit_Attribute 第71–74行的 dunder 名混淆检查拦截，真正被放行的并非字面访问。
+- **原问题**：critical_operation 被置于 constants.py:126 的 BLOCKED_ATTRIBUTES 静态集合定义。该集合只是被 visit_Attribute 引用的数据源，本身不执行任何校验，是“关键操作落在静态列表”的典型问题；同时原 desc 还误判了绕过机制——它声称“集合漏列 __objclass__，使字面量 __objclass__ 访问被静默放行”。实际上字面量 `.__objclass__` 也**不会**被 dunder 名混淆检查拦截：该检查（71–74行）本意只拦截名称改写形式（如 `_Class__attr`），`__objclass__` 经 `split('__',1)` 后首段为空、不满足 `parts[0].startswith('_')`，同样不触发；真正被放行的是**所有**访问——无论字面还是 `getattr` 动态访问，根因是分析器只覆盖字面 `obj.attr` 语法、遗漏动态属性访问。
 
 - **修复位置**：critical_operation 改为 task_analyzer.py:66 的 `if node.attr in BLOCKED_ATTRIBUTES:`（visit_Attribute 内属性黑名单比对的施力点）。
 
 - **选择该位置的理由**：这是 AST 静态校验真正生效、决定放行/拦截的位置：它逐节点提取 node.attr 与 BLOCKED_ATTRIBUTES 比对。其决定性缺陷在于该检查**仅覆盖字面量 `obj.attr`（ast.Attribute）节点**，对 `getattr(obj, name)` / `object.__getattribute__(obj, name)` 这类以字符串常量传递属性名的**动态访问完全不分析**。因此攻击者用 `getattr(type(1).__getattribute__, "__objclass__")` 取得 object 类后，再 `getattr(object, "__subclasses__")()`（或 `__builtins__`）拿到 eval/exec 完成逃逸——整张黑名单被绕过。即真正的根因是分析器覆盖范围（仅字面属性）的局限，而非集合是否列出某个具体属性（如 __objclass__）。
 
-- **未采用候选点的原因**：候选 constants.py:126 仅是数据源、不决定放行；候选 task_runner.py:321 的 validate() 只是入口，逐节点判定发生在 visit_Attribute；候选 dunder 名混淆检查（71–74 行）虽也参与拦截，但同样只对字面量生效、同样被 getattr 动态访问绕过，故核心 critical 仍定为第66行的黑名单比对施力点。
+- **未采用候选点的原因**：候选 constants.py:126 仅是数据源、不决定放行；候选 task_runner.py:321 的 validate() 只是入口，逐节点判定发生在 visit_Attribute；候选 dunder 名混淆检查（71–74 行）本意是拦截名称改写形式（如 `_Class__attr`），对纯双下划线名（如 `__objclass__`/`__class__`）因 `split('__',1)` 首段为空同样不触发，且对 `getattr` 动态访问完全不可见，故核心 critical 仍定为第66行的黑名单比对施力点。
 
 ## entry-00511 — VM 表达式引擎沙箱逃逸 extend→constructor (GHSA-6CQR-8CFR-67F8)
 
