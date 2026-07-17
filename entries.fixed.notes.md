@@ -8,7 +8,7 @@
 
 - **原问题**：critical_operation 被置于 PrototypeSanitizer 定义（expression-sandboxing.ts:244）。PrototypeSanitizer 是防御方钩子，其缺少 visitWithStatement 处理器是根因缺口，但“RCE sink 落在 sanitizer 上”语义不准确——它并不是代码被实际执行的位置。
 
-- **修复位置**：critical_operation 改为 expression-evaluator-proxy.ts:19-21（evaluateExpression → tournamentEvaluator.execute）；trace 终点同步改为该 eval sink，并保留 PrototypeSanitizer:244 作为根因节点。
+- **修复位置**：critical_operation 改为 expression-evaluator-proxy.ts:19-21（evaluateExpression → tournamentEvaluator.execute）；trace 终点同步改为该 eval sink，并保留 PrototypeSanitizer:244 作为根因节点。另外补入 `expression.ts:452-453`（extendSyntax + renderExpression）作为 trace 中的实际执行环节，使从参数处理（384-393）到 eval sink（19-21）的控制流连贯，不再缺关键执行步骤。
 
 - **选择该位置的理由**：evaluateExpression 是表达式字符串被宿主引擎实际编译执行的唯一公共出口，逃逸后的 with 语句在此落地为任意代码，是真正体现“RCE”的执行点。
 
@@ -28,7 +28,7 @@
 
 - **原问题**：entry_point 被置于 webhook-helpers.ts:615 的 `}` 闭合括号，属非执行点，无法体现外部可控的 content-type 如何进入漏洞链路；且其 trace[0]（同一 `}`）亦为无效锚点。
 
-- **修复位置**：entry_point 改为 webhook-request-handler.ts:146-155（setResponseHeaders：res.setHeader 写入用户 content-type，随后 getHeader 读回并传入 isHtmlRenderedContentType）；trace 起点同步修正。critical_operation（html-sandbox.ts:20，缺 .trim()）确为根因缺陷，予以保留。
+- **修复位置**：entry_point 改为 webhook-request-handler.ts:146-154（setResponseHeaders：res.setHeader 写入用户 content-type，随后 getHeader 读回并传入 isHtmlRenderedContentType）；原 trace 中 615 非执行点 `}` 节点移除，setResponseHeaders 146-154 作为 trace[1] 保留（trace[0] 为上游 streaming 605-614），数据流连贯。critical_operation（html-sandbox.ts:20，缺 .trim()）确为根因缺陷，予以保留。
 
 - **选择该位置的理由**：setResponseHeaders 是工作流用户指定的 content-type 头真正被写入响应并读回校验的环节，是外部输入进入 CSP 判定链路的准确入口。
 
@@ -48,7 +48,7 @@
 
 - **原问题**：critical_operation 被置于 findExtendedFunction 的 native 回退分支（extend.ts:82-84）。该分支“缺失函数名检查”是缺陷，但本身不执行代码，未体现 RCE 的真正发生点。
 
-- **修复位置**：critical_operation 改为 extend.ts:132-134（foundFunction.function.apply(input, args)）；trace 终点同步改为该 .apply 执行点，保留 79-85 回退分支作为上游缺失检查节点。
+- **修复位置**：critical_operation 改为 extend.ts:132-135（foundFunction.function.apply(input, args)）；trace 终点同步改为该 .apply 执行点，保留 79-85 回退分支作为上游缺失检查节点。同时将 entry_point 与 trace 各节点的英文描述统一翻译为中文，与全库（00099/00100/00103/00176/00512）保持一致，便于人工复核。
 
 - **选择该位置的理由**：Function 构造函数在 native 回退中被解析出来后，正是在 .apply 处被调用并执行攻击者传入的代码字符串，这是整条链路中代码真正落地的执行 sink。
 
